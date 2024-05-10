@@ -1,24 +1,52 @@
 import * as React from "react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Button from "@mui/material/Button";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogContentText from "@mui/material/DialogContentText";
 import DialogTitle from "@mui/material/DialogTitle";
+import { Snackbar } from "@mui/material";
+import "./Meet.css";
+import Video from "./Video";
+
+let servers = {
+  iceServers: [
+    {
+      urls: ["stun:stun1.1.google.com:19302", "stun:stun2.1.google.com:19302"],
+    },
+  ],
+};
 
 const Meet = ({ socket, socketMessage }) => {
+  const peerConnection = useRef();
+  const [state, setState] = React.useState({
+    SnackBarOpen: false,
+    vertical: "top",
+    horizontal: "right",
+    message: "",
+  });
+  const { vertical, horizontal, SnackBarOpen, message } = state;
   const [open, setOpen] = React.useState(false);
   const [senderName, setSenderName] = useState("");
   const queryParams = new URLSearchParams(window.location.search);
   const name = queryParams.get("name");
   const room = queryParams.get("room");
 
+  //   WebRTC states
+  const [localStream, setLocalStream] = useState();
+  const [remoteStream, setRemoteStream] = useState();
+
   const handleClose = () => {
     setOpen(false);
   };
 
+  const handlePeerConnection = async () => {
+    peerConnection.current = new RTCPeerConnection(servers);
+  };
+
   useEffect(() => {
+    handlePeerConnection();
     if (socketMessage) {
       if (socketMessage.data.socket !== socketMessage.socketId) {
         socket.emit("sendMessage", {
@@ -26,10 +54,13 @@ const Meet = ({ socket, socketMessage }) => {
           message: "This is the ice Candidates.",
           socketId: socket.id,
           name: name,
+          type: "request",
         });
       }
     }
   }, [socketMessage]);
+
+  console.log("Line 51", peerConnection.current);
 
   /* This `useEffect` hook is setting up a listener for the "message" event on the `socket` object.
   When a "message" event is received, it checks if the `socket.id` of the current socket is not
@@ -41,20 +72,67 @@ const Meet = ({ socket, socketMessage }) => {
   useEffect(() => {
     if (socket) {
       socket.on("message", (data) => {
-        if (socket.id !== data.socketId) {
-          setTimeout(() => {
-            setSenderName(data.name);
-            setOpen(true);
-          }, 1000);
+        if (data.type === "request") {
+          if (socket.id !== data.socketId) {
+            setTimeout(() => {
+              setSenderName(data.name);
+              setOpen(true);
+            }, 1000);
+          }
+        } else {
+          if (socket.id !== data.socketId) {
+            console.log("Line 54", data);
+            setState({
+              ...state,
+              SnackBarOpen: true,
+              message: `${data.name} accepted and joined.`,
+            });
+          }
         }
       });
     }
   }, [socket]);
 
+  //   Accept the approval request.
+  const handleApprove = () => {
+    socket.emit("sendMessage", {
+      room: socketMessage.data.room,
+      message: "Ice Candidates received and sent the another one.",
+      socketId: socket.id,
+      name: name,
+      type: "accept",
+    });
+    handleClose();
+  };
+
+  const handleCloseSnackbar = () => {
+    setState({ ...state, SnackBarOpen: false });
+  };
+
+  useEffect(() => {
+    // This shouldn't run on every render either
+    navigator.mediaDevices
+      .getUserMedia({ video: true, audio: false })
+      .then((stream) => {
+        setRemoteStream(stream);
+      });
+  }, []);
+
+  console.log("Line 106", remoteStream && remoteStream);
+
   return (
     <React.Fragment>
       <div>
-        <h4>Welcomet to meet wait for approval</h4>
+        <div className="videos_list" id="videos">
+          <div className="video-player">
+            <Video stream={localStream ? localStream : remoteStream} />
+          </div>
+          {localStream && (
+            <div className="video-player1">
+              <Video stream={remoteStream} />
+            </div>
+          )}
+        </div>
       </div>
       <Dialog
         open={open}
@@ -71,11 +149,21 @@ const Meet = ({ socket, socketMessage }) => {
         </DialogContent>
         <DialogActions>
           <Button onClick={handleClose}>Deny</Button>
-          <Button onClick={handleClose} autoFocus>
+          <Button onClick={handleApprove} autoFocus>
             Accept
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/** Snackbar component */}
+      <Snackbar
+        anchorOrigin={{ vertical, horizontal }}
+        open={SnackBarOpen}
+        message={message}
+        key={vertical + horizontal}
+        autoHideDuration={6000}
+        onClose={handleCloseSnackbar}
+      />
     </React.Fragment>
   );
 };
